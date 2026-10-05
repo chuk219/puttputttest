@@ -111,6 +111,9 @@ h1{font-family:var(--display);font-weight:400;font-size:clamp(19px,2.2vw,24px);l
 .proj-ui{position:absolute;top:14px;right:14px;display:flex;align-items:center;gap:12px;background:rgba(14,17,26,0.82);color:#dfe4ef;border:1px solid #333a4a;border-radius:10px;padding:8px 10px 8px 14px;font:500 12px/1.35 var(--mono);transition:opacity .4s;max-width:calc(100% - 28px)}
 .stage.proj.idle .proj-ui{opacity:0;pointer-events:none}
 .proj-ui .btn{background:#2a2f3a;border-color:#3d4454;color:#fff}
+.proj-ui{flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.proj-ui .btn[aria-pressed="true"]{background:#2343d6;border-color:#2343d6}
+.pu-hint{margin-right:4px}
 .stage-foot .mono{font-family:var(--mono);font-size:12px;color:#8a94a9;font-variant-numeric:tabular-nums}
 .keys{display:none;width:100%;font-family:var(--mono);font-size:11.5px;color:#6f798e}
 @media (pointer:fine){.keys{display:block}}
@@ -285,9 +288,15 @@ body{margin:0}
         <span class="foot-btns"><button class="btn small proj-btn" id="btnLive" type="button">Live camera</button><button class="btn small proj-btn" id="btnProj" type="button">Projector mode</button></span>
       </div>
       <div class="proj-ui" id="projUi" hidden>
-        <span>Drag to putt · Enter next · G game · M tap mode · V tee · T test card · L live camera · D debug · Esc exit</span>
-        <button class="btn small" id="btnTee" type="button">Hide tee</button>
-        <button class="btn small" id="btnProjExit" type="button">Exit</button>
+        <span class="pu-hint">Drag to putt · Enter next</span>
+        <button class="btn small" id="pbGame" type="button" title="Next game (G)">Next game</button>
+        <button class="btn small" id="pbTest" type="button" title="Test card (T)">Test card</button>
+        <button class="btn small" id="btnTee" type="button" title="Tee (V)">Hide tee</button>
+        <button class="btn small" id="pbPanel" type="button" title="Live camera panel (L)">Live panel</button>
+        <button class="btn small" id="pbTrack" type="button" hidden>Start tracking</button>
+        <button class="btn small" id="pbSkip" type="button" title="Skip to the next round (N)" hidden>Skip round</button>
+        <button class="btn small" id="pbDbg" type="button" title="Debug overlay (D)" aria-pressed="false">Debug</button>
+        <button class="btn small" id="btnProjExit" type="button" title="Exit (Esc)">Exit</button>
       </div>
       <video class="cam-video" id="camVideo" playsinline muted></video>
       <div class="pin-handles" id="pinHandles" hidden></div>
@@ -2008,6 +2017,7 @@ function makeFloor(){
 }
 function drawBall(){
   if (!ball.visible) return;
+  
   const r = Math.max(BALL_R, 3.5*dpr/view.T);
   circle(ball.x+r*0.35, ball.y+r*0.45, r*1.02); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fill();
   const g = ctx.createRadialGradient(ball.x-r*0.35, ball.y-r*0.4, r*0.1, ball.x, ball.y, r);
@@ -2070,6 +2080,7 @@ function drawTestCard(){
 }
 function drawProj(){
   if (teeShown() !== !!view.tee) resize();
+  refreshProjBar();
   const tee = !!view.tee;
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#000'; ctx.fillRect(0,0,cvs.width,cvs.height);
   setWorld();
@@ -2419,6 +2430,27 @@ function toggleTee(){
 }
 $('btnTee').textContent = projTee ? 'Hide tee' : 'Show tee';
 $('btnTee').addEventListener('click', toggleTee);
+function skipRound(){
+  if (LIVE.on && LIVE.state === 'rolling'){ mode = 'aim'; shot = null; LIVE.state = 'collect'; LIVE.resultAt = state.clock - 2.5; llog('Shot cancelled'); setHint(); return; }
+  if (mode === 'result' || mode === 'over'){ advance(); if (LIVE.on){ LIVE.state = 'collect'; LIVE.resultAt = state.clock - 2.5; } }
+}
+let projBarKey = '';
+function refreshProjBar(){
+  if (!proj) return;
+  const k = [LIVE.src ? 1 : 0, LIVE.on ? 1 : 0, LIVE.panel ? 1 : 0, LIVE.dbg ? 1 : 0, projTest ? 1 : 0].join('');
+  if (k === projBarKey) return; projBarKey = k;
+  $('pbTrack').hidden = !LIVE.src; $('pbTrack').textContent = LIVE.on ? 'Pause tracking' : 'Start tracking'; $('btnTee').hidden = !!LIVE.src;
+  $('pbSkip').hidden = !LIVE.on;
+  $('pbPanel').textContent = LIVE.panel ? 'Hide panel' : 'Live panel';
+  $('pbDbg').setAttribute('aria-pressed', String(!!LIVE.dbg));
+  $('pbTest').setAttribute('aria-pressed', String(projTest));
+}
+$('pbGame').addEventListener('click', () => { gameIdx = (gameIdx + 1) % GAMES.length; startGame(); if (LIVE.on){ LIVE.state = 'collect'; LIVE.resultAt = state.clock - 2.5; } });
+$('pbTest').addEventListener('click', () => { projTest = !projTest; });
+$('pbPanel').addEventListener('click', () => showLivePanel(!LIVE.panel));
+$('pbTrack').addEventListener('click', () => { if (LIVE.on){ stopLivePlay(); renderLiveStatus(); } else if (!startLivePlay()) showLivePanel(true); else showLivePanel(false); });
+$('pbSkip').addEventListener('click', skipRound);
+$('pbDbg').addEventListener('click', () => { LIVE.dbg = !LIVE.dbg; buildPixMap(); const cb = $('lpDbg'); if (cb) cb.checked = LIVE.dbg; });
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && proj) exitProj(); else resize(); });
 stageSec.addEventListener('pointermove', () => { if (proj) wake(); });
 document.addEventListener('keydown', e => {
@@ -2429,8 +2461,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'g' || e.key === 'G'){ gameIdx = (gameIdx + (e.shiftKey ? GAMES.length-1 : 1)) % GAMES.length; startGame(); e.preventDefault(); return; }
   if (e.key === 'l' || e.key === 'L'){ showLivePanel(!LIVE.panel); e.preventDefault(); return; }
   if (e.key === 'd' || e.key === 'D'){ LIVE.dbg = !LIVE.dbg; buildPixMap(); const cb = $('lpDbg'); if (cb) cb.checked = LIVE.dbg; e.preventDefault(); return; }
-  if ((e.key === 'n' || e.key === 'N') && (mode === 'result' || mode === 'over')){ advance(); if (LIVE.on){ LIVE.state = 'collect'; LIVE.resultAt = state.clock - 2.5; } e.preventDefault(); return; }
-  if ((e.key === 'c' || e.key === 'C') && LIVE.on && LIVE.state === 'rolling'){ mode = 'aim'; shot = null; LIVE.state = 'collect'; LIVE.resultAt = state.clock - 2.5; llog('Shot cancelled'); setHint(); e.preventDefault(); return; }
+  if (e.key === 'n' || e.key === 'N' || ((e.key === 'c' || e.key === 'C') && LIVE.on && LIVE.state === 'rolling')){ skipRound(); e.preventDefault(); return; }
   if (e.key === 'm' || e.key === 'M'){ S.input = S.input === 'tap' ? 'putt' : 'tap'; saveSettings(); document.querySelectorAll('input[name="input"]').forEach(i => i.checked = i.value === S.input); setHint(); e.preventDefault(); }
   if (document.activeElement !== cvs) cvs.focus({preventScroll:true});
 });
@@ -2448,7 +2479,8 @@ const LIVE = {
   rest:{t:0.6, r:0.6}, clearT:1.5, startZone:'tee', latency:0.1,
   state:'off', det:null, detT:-9, hist:[], cand:[], samples:[], prev:null, miss:0, lastSeen:-9, resultAt:0,
   pin:null, fitting:false, calib:null, flash:null, dbg:false, dbgCorner:'tr', mark:true, panel:false,
-  waiters:[], log:[], stats:{frames:0, hits:0, hitWin:[]}, sweep:null, devId:'', res:1280, lockNote:''
+  waiters:[], log:[], stats:{frames:0, hits:0, hitWin:[], weak:0, restStarts:0, moveStarts:0}, sweep:null, devId:'', res:1280, lockNote:'',
+  readyAt:0, bg:[], bgLogged:false
 };
 function liveLoad(){
   try {
@@ -2620,55 +2652,86 @@ function hsv(r, g, b){
 }
 
 // ---- ball detection: color mask -> connected blobs -> best ball-sized blob, all in sheet feet ----
-function detectBall(){
-  const d = LIVE.frame, pw = LIVE.pw, roi = LIVE.roi; if (!d || !roi || !LIVE.Hcs) return null;
-  const t0 = performance.now(), m = LIVE.mask, lab = LIVE.lab, valid = LIVE.valid, C = LIVE.color;
-  const vmin = C.v*255; let count = 0;
-  for (let y=roi.y0; y<=roi.y1; y++){
-    for (let x=roi.x0, i=y*pw+roi.x0; x<=roi.x1; x++, i++){
+function maskPass(C, R){
+  const d = LIVE.frame, pw = LIVE.pw, m = LIVE.mask, lab = LIVE.lab, valid = LIVE.valid, vmin = C.v*255; let count = 0;
+  for (let y=R.y0; y<=R.y1; y++){
+    for (let x=R.x0, i=y*pw+R.x0; x<=R.x1; x++, i++){
       m[i] = 0; lab[i] = 0; if (!valid[i]) continue;
       const k = i*4, r = d[k], g = d[k+1], b = d[k+2], mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
       if (mx < vmin) continue;
       const mn = r < g ? (r < b ? r : b) : (g < b ? g : b), dl = mx-mn; if (dl < C.s*mx) continue;
       let h; if (mx === r) h = 60*((g-b)/dl); else if (mx === g) h = 60*((b-r)/dl + 2); else h = 60*((r-g)/dl + 4);
       if (h < 0) h += 360;
-      const dh = Math.abs(((h - C.h + 540) % 360) - 180); if (dh > C.dh) continue;
+      if (Math.abs(((h - C.h + 540) % 360) - 180) > C.dh) continue;
       m[i] = 1; count++;
     }
   }
-  const res = {t:state.clock, count, blobs:[], best:null, note:''};
-  if (count > 6000){ res.note = 'too many pixels match the ball color'; LIVE.procMs = performance.now()-t0; return res; }
-  const st = LIVE.stack; let label = 0;
-  for (let y=roi.y0; y<=roi.y1; y++) for (let x=roi.x0; x<=roi.x1; x++){
+  return count;
+}
+function blobsIn(R){
+  const pw = LIVE.pw, m = LIVE.mask, lab = LIVE.lab, st = LIVE.stack, raw = []; let label = 0;
+  for (let y=R.y0; y<=R.y1; y++) for (let x=R.x0; x<=R.x1; x++){
     const i0 = y*pw+x; if (!m[i0] || lab[i0]) continue;
     label++; let sp = 0, area = 0, sx = 0, sy = 0, px = 0, py = 0; st[sp++] = i0; lab[i0] = label;
     while (sp){
       const i = st[--sp], ix = i % pw, iy = (i - ix)/pw; area++; sx += LIVE.pixSX[i]; sy += LIVE.pixSY[i]; px += ix; py += iy;
-      if (ix > roi.x0 && m[i-1] && !lab[i-1]){ lab[i-1] = label; st[sp++] = i-1; }
-      if (ix < roi.x1 && m[i+1] && !lab[i+1]){ lab[i+1] = label; st[sp++] = i+1; }
-      if (iy > roi.y0 && m[i-pw] && !lab[i-pw]){ lab[i-pw] = label; st[sp++] = i-pw; }
-      if (iy < roi.y1 && m[i+pw] && !lab[i+pw]){ lab[i+pw] = label; st[sp++] = i+pw; }
+      if (ix > R.x0 && m[i-1] && !lab[i-1]){ lab[i-1] = label; st[sp++] = i-1; }
+      if (ix < R.x1 && m[i+1] && !lab[i+1]){ lab[i+1] = label; st[sp++] = i+1; }
+      if (iy > R.y0 && m[i-pw] && !lab[i-pw]){ lab[i-pw] = label; st[sp++] = i-pw; }
+      if (iy < R.y1 && m[i+pw] && !lab[i+pw]){ lab[i+pw] = label; st[sp++] = i+pw; }
     }
-    res.blobs.push({area, x:sx/area, y:sy/area, px:px/area, py:py/area});
+    raw.push({area, x:sx/area, y:sy/area, px:px/area, py:py/area});
   }
-  // a highlight or the putter shaft can split one ball into fragments: merge pieces within a ball's width
+  // a highlight, motion streak or the putter shaft can split one ball into fragments: merge pieces within a ball's width
   const merged = [];
-  for (const f of res.blobs.sort((p,q) => q.area-p.area)){
-    const m2 = merged.find(g => Math.hypot(g.x-f.x, g.y-f.y) < BALL_R*2.4);
+  for (const f of raw.sort((p,q) => q.area-p.area)){
+    const m2 = merged.find(g => Math.hypot(g.x-f.x, g.y-f.y) < BALL_R*2.6);
     if (m2){ const A = m2.area+f.area; m2.x = (m2.x*m2.area+f.x*f.area)/A; m2.y = (m2.y*m2.area+f.y*f.area)/A; m2.px = (m2.px*m2.area+f.px*f.area)/A; m2.py = (m2.py*m2.area+f.py*f.area)/A; m2.area = A; m2.parts++; }
     else merged.push(Object.assign({parts:1}, f));
   }
   for (const b of merged){ b.exp = expectedArea(b.x, b.y); b.ratio = b.exp ? b.area/b.exp : 0; }
-  res.blobs = merged;
-  const pred = LIVE.hist.length ? LIVE.hist[LIVE.hist.length-1] : null;
-  let top = -Infinity;
-  for (const b of res.blobs){
-    if (b.area < 2 || b.ratio < 0.15 || b.ratio > 4){ b.rejected = true; continue; }
+  return merged;
+}
+function chooseBlob(blobs, o){
+  const pred = LIVE.hist.length ? LIVE.hist[LIVE.hist.length-1] : null; let top = -Infinity, best = null;
+  for (const b of blobs){
+    if (b.area < 2 || b.ratio < o.lo || b.ratio > o.hi){ b.rejected = true; continue; }
+    if (o.ignore && o.ignore.some(p => Math.hypot(p.x-b.x, p.y-b.y) < 0.3)){ b.ignored = true; continue; }
+    if (o.near && Math.hypot(b.x-o.near.x, b.y-o.near.y) > o.maxDist) continue;
     let sc = -Math.abs(Math.log(b.ratio));
     if (pred && state.clock - pred.t < 0.5) sc -= Math.hypot(b.x-pred.x, b.y-pred.y)*0.8;
-    if (sc > top){ top = sc; res.best = b; }
+    if (sc > top){ top = sc; best = b; }
   }
-  if (!res.best && res.blobs.length) res.note = 'color matches found, but none are ball-sized';
+  return best;
+}
+function roiAround(sx, sy, r){
+  const R0 = LIVE.roi; if (!R0) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [cx, cy] of [[sx-r,sy-r],[sx+r,sy-r],[sx+r,sy+r],[sx-r,sy+r]]){
+    const [u, v] = camPx(clamp(cx, 0, W), clamp(cy, 0, D)); x0 = Math.min(x0, u); x1 = Math.max(x1, u); y0 = Math.min(y0, v); y1 = Math.max(y1, v);
+  }
+  const R = {x0:Math.max(R0.x0, Math.floor(x0)), y0:Math.max(R0.y0, Math.floor(y0)), x1:Math.min(R0.x1, Math.ceil(x1)), y1:Math.min(R0.y1, Math.ceil(y1))};
+  return R.x1 > R.x0 && R.y1 > R.y0 ? R : null;
+}
+function detectBall(){
+  if (!LIVE.frame || !LIVE.roi || !LIVE.Hcs) return null;
+  const t0 = performance.now(), C = LIVE.color;
+  const ignore = LIVE.on && LIVE.state === 'ready' ? LIVE.bg : null;
+  const count = maskPass(C, LIVE.roi);
+  const res = {t:state.clock, count, blobs:[], best:null, note:'', weak:false};
+  if (count > 6000) res.note = 'too many pixels match the ball color';
+  else {
+    res.blobs = blobsIn(LIVE.roi); res.best = chooseBlob(res.blobs, {lo:0.15, hi:4, ignore});
+    if (!res.best && res.blobs.length) res.note = res.blobs.some(b => b.ignored) ? 'only spots that were already on the sheet' : 'color matches found, but none are ball-sized';
+  }
+  // A rolling ball smears during each camera frame, which washes out its color. Take a looser second look near where it was.
+  if (!res.best && LIVE.on && LIVE.state === 'rolling' && LIVE.samples.length){
+    const l = LIVE.samples[LIVE.samples.length-1], R = roiAround(l.x, l.y, 1.6);
+    if (R){
+      const n2 = maskPass({h:C.h, dh:Math.min(60, C.dh*1.6), s:C.s*0.6, v:C.v*0.7}, R);
+      if (n2 && n2 < 3000){ const bl = blobsIn(R), b2 = chooseBlob(bl, {lo:0.12, hi:6, near:l, maxDist:1.6}); if (b2){ res.best = b2; res.blobs = bl; res.weak = true; LIVE.stats.weak++; } }
+    }
+  }
   LIVE.procMs = performance.now()-t0;
   return res;
 }
@@ -2696,6 +2759,9 @@ function processFrame(){
   LIVE.stats.frames++; if (b) LIVE.stats.hits++;
   if (b){ LIVE.detT = state.clock; LIVE.lastSeen = state.clock; LIVE.hist.push({x:b.x, y:b.y, t:state.clock}); if (LIVE.hist.length > 40) LIVE.hist.shift(); }
   if (LIVE.sweep) LIVE.sweep.frames.push(b ? {x:b.x, y:b.y} : null);
+  if (LIVE.on && LIVE.state === 'ready' && state.clock - LIVE.readyAt <= 0.6 && res){
+    for (const bl of res.blobs) if (!bl.rejected && !LIVE.bg.some(p => Math.hypot(p.x-bl.x, p.y-bl.y) < 0.3)) LIVE.bg.push({x:bl.x, y:bl.y});
+  }
   if (LIVE.on) liveStep(b);
   if (LIVE.panel) drawPreview();
   if (LIVE.dbg) updateDbgMask();
@@ -2706,15 +2772,25 @@ function liveStep(b){
   const t = state.clock - LIVE.latency;
   if (LIVE.state === 'ready'){
     if (mode !== 'aim'){ LIVE.cand = []; return; }
-    if (!b){ LIVE.cand = []; return; }
-    // A shot starts when a ball-sized blob moves. From the tee edge it must also be heading away from the tee,
-    // so a player carrying the ball back toward the tee never starts a shot.
-    const c = LIVE.cand; c.push({x:b.x, y:b.y, t});
-    if (c.length > 4) c.shift();
+    if (state.clock - LIVE.readyAt < 0.6) return;   // first learn what's already on the sheet
+    if (!LIVE.bgLogged){ LIVE.bgLogged = true; if (LIVE.bg.length) llog(`Ignoring ${plural(LIVE.bg.length, 'ball-colored spot')} already on the sheet`); }
+    const c = LIVE.cand;
+    if (!b){ if (c.length && t - c[c.length-1].t > 0.4) LIVE.cand = []; return; }   // short gaps are normal while a ball smears
+    c.push({x:b.x, y:b.y, t}); while (c.length && t - c[0].t > 1.5) c.shift();
     if (c.length < 2) return;
     const f = c[0], l = c[c.length-1], moved = Math.hypot(l.x-f.x, l.y-f.y) > 0.6/12;
-    const ok = LIVE.startZone === 'anywhere' ? moved : (moved && l.y - f.y < -0.5/12 && f.y > D*0.45);
-    if (ok) beginLiveShot(c);
+    // 1) A moving ball starts a shot. From the tee edge it must be heading away from the tee,
+    //    so a player carrying the ball back toward the tee never starts one.
+    if (moved && (LIVE.startZone === 'anywhere' || l.y - f.y < -0.4/12)){ LIVE.stats.moveStarts++; beginLiveShot(c, false); return; }
+    // 2) A ball that turns up already at rest also counts: the roll was missed, but where it stopped is what most games score.
+    if (l.t - f.t >= LIVE.rest.t + 0.2){
+      const mx = avg(c.map(p => p.x)), my = avg(c.map(p => p.y));
+      if (c.every(p => Math.hypot(p.x-mx, p.y-my) <= LIVE.rest.r/12)){
+        LIVE.stats.restStarts++; beginLiveShot(c, true);
+        llog('The roll wasn’t seen, only the ball at rest. If this keeps happening, shorten the exposure time or widen the color match.');
+        LIVE.restAt = {x:mx, y:my}; endLiveShot();
+      }
+    }
     return;
   }
   if (LIVE.state === 'rolling'){
@@ -2735,11 +2811,12 @@ function liveStep(b){
     }
   }
 }
-function beginLiveShot(c){
+function armReady(){ LIVE.state = 'ready'; LIVE.cand = []; LIVE.hist = []; LIVE.readyAt = state.clock; LIVE.bg = []; LIVE.bgLogged = false; }
+function beginLiveShot(c, atRest){
   shot = newShot(); shot.info = {live:true}; LIVE.samples = []; LIVE.prev = null; LIVE.miss = 0;
   mode = 'roll'; LIVE.state = 'rolling'; kb.active = false;
   if (game.onShotStart) game.onShotStart();
-  llog(`Ball entered at ${c[0].x.toFixed(2)}, ${c[0].y.toFixed(2)} ft`);
+  llog(atRest ? `Ball found at rest at ${c[0].x.toFixed(2)}, ${c[0].y.toFixed(2)} ft` : `Ball rolling in at ${c[0].x.toFixed(2)}, ${c[0].y.toFixed(2)} ft`);
   for (const s of c) addLiveSample(s);
   setHint(); updateShotInfo();
 }
@@ -2757,7 +2834,7 @@ function liveAtRest(){
   const r = LIVE.rest.r/12;
   return win.length >= 3 && win.every(s => Math.hypot(s.x-mx, s.y-my) <= r) ? (LIVE.restAt = {x:mx, y:my}, true) : false;
 }
-function endLiveShot(){ const p = LIVE.restAt; llog(`Stopped at ${p.x.toFixed(2)}, ${p.y.toFixed(2)} ft`); finishLive(p, null); }
+function endLiveShot(){ const p = LIVE.restAt; llog(`Stopped at ${p.x.toFixed(2)}, ${p.y.toFixed(2)} ft after ${plural(LIVE.samples.length, 'camera sighting')}`); finishLive(p, null); }
 function finishLive(p, why){
   shot.rest = p; shot.why = why; readAt = state.clock; mode = 'read'; LIVE.state = 'stopped'; setHint();
 }
@@ -2773,7 +2850,7 @@ function liveTick(){
     if (state.clock - LIVE.resultAt > 2.5 && gone > LIVE.clearT){
       if (mode === 'result'){ advance(); if (mode === 'over'){ LIVE.resultAt = state.clock; llog('Hole complete'); } }
       else if (mode === 'over' && state.clock - LIVE.resultAt > 6){ startGame(); llog('New game'); }
-      if (mode === 'aim'){ LIVE.state = 'ready'; LIVE.cand = []; LIVE.hist = []; llog('Ready for the next putt'); }
+      if (mode === 'aim'){ armReady(); llog('Ready for the next putt'); }
     }
   }
 }
@@ -2781,8 +2858,8 @@ function startLivePlay(){
   if (!LIVE.src){ llog('Start the camera first'); return false; }
   if (!LIVE.Hcs){ llog('Calibrate first'); return false; }
   if (!proj) enterProj();
-  LIVE.on = true; LIVE.state = mode === 'aim' ? 'ready' : 'collect'; LIVE.resultAt = state.clock; LIVE.cand = [];
-  S.input = 'putt';
+  LIVE.on = true; LIVE.resultAt = state.clock; if (mode === 'aim') armReady(); else LIVE.state = 'collect';
+  S.input = 'putt'; refreshProjBar();
   llog('Tracking on'); return true;
 }
 function stopLivePlay(why){ if (!LIVE.on) return; LIVE.on = false; LIVE.state = 'off'; if (mode === 'roll' || mode === 'read'){ mode = 'aim'; shot = null; } llog(why || 'Tracking paused'); setHint(); }
@@ -2920,7 +2997,7 @@ function fitColor(all, where){
   let h = Math.atan2(sn, cs)*180/Math.PI; if (h < 0) h += 360;
   const dev = px.map(p => Math.abs(((p.h-h+540) % 360) - 180)).sort((a,b)=>a-b), p90 = dev[Math.floor(dev.length*0.9)];
   const med = a => a.slice().sort((x,y)=>x-y)[Math.floor(a.length/2)];
-  LIVE.color = {h:Math.round(h), dh:Math.round(clamp(p90*1.6+6, 10, 40)), s:+clamp(med(px.map(p=>p.s))*0.6, 0.18, 0.7).toFixed(2), v:+clamp(med(px.map(p=>p.v))*0.55, 0.15, 0.7).toFixed(2), sampled:true};
+  LIVE.color = {h:Math.round(h), dh:Math.round(clamp(p90*1.8+8, 16, 45)), s:+clamp(med(px.map(p=>p.s))*0.45, 0.15, 0.6).toFixed(2), v:+clamp(med(px.map(p=>p.v))*0.45, 0.12, 0.6).toFixed(2), sampled:true};
   liveSave(); syncLiveInputs();
   lpNote('lpColorNote', `Ball color set from ${px.length} pixels: hue ${LIVE.color.h}° ±${LIVE.color.dh}°, saturation ≥ ${LIVE.color.s}, brightness ≥ ${LIVE.color.v}.`, 'good');
   llog(`Ball color hue ${LIVE.color.h}° ±${LIVE.color.dh}°, sat ≥ ${LIVE.color.s}, bright ≥ ${LIVE.color.v} (${px.length} px)`);
@@ -3041,17 +3118,24 @@ async function loadClip(file){
 function buildCamControls(){
   const c = LIVE.caps || {}, box = $('lpCamCtl'), rows = [];
   const can = k => Array.isArray(c[k]) && c[k].includes('manual');
-  for (const [k, label] of [['zoom','Zoom'], ['exposureCompensation','Exposure']]){
+  const CTL = {zoom:['Zoom', v => `${(+v).toFixed(1)}×`], exposureTime:['Exposure time', v => `${(v/10).toFixed(1)} ms`], exposureCompensation:['Brightness', v => (+v).toFixed(1)]};
+  for (const [k, [label, f]] of Object.entries(CTL)){
     if (c[k] && c[k].max > c[k].min){
-      const v = LIVE.settings[k] ?? c[k].min;
-      rows.push(`<label class="lp-sl"><span>${label}</span><input type="range" id="lpCam-${k}" min="${c[k].min}" max="${c[k].max}" step="${c[k].step || 0.1}" value="${v}"><b id="lpCam-${k}-v">${(+v).toFixed(1)}</b></label>`);
+      let mx = c[k].max; if (k === 'exposureTime') mx = Math.min(mx, 500);   // over 50 ms only adds blur
+      const v = clamp(LIVE.settings[k] ?? c[k].min, c[k].min, mx);
+      rows.push(`<label class="lp-sl"><span>${label}</span><input type="range" id="lpCam-${k}" min="${c[k].min}" max="${mx}" step="${c[k].step || 0.1}" value="${v}"><b id="lpCam-${k}-v">${f(v)}</b></label>`);
     }
   }
+  if (c.exposureTime) rows.push('<p class="lp-note">If a rolling ball isn’t seen, shorten the exposure time until the ball is crisp mid-roll. 8 ms or less usually works; the picture gets darker, which is fine.</p>');
   rows.push(`<p class="lp-note">Can lock: exposure ${can('exposureMode') ? 'yes' : 'no'}, white balance ${can('whiteBalanceMode') ? 'yes' : 'no'}, focus ${can('focusMode') ? 'yes' : 'no'}.${LIVE.lockNote ? ' ' + LIVE.lockNote : ''}</p>`);
   box.innerHTML = rows.join('');
-  for (const k of ['zoom','exposureCompensation']){
+  for (const [k, [, f]] of Object.entries(CTL)){
     const el = $(`lpCam-${k}`); if (!el) continue;
-    el.addEventListener('input', async () => { $(`lpCam-${k}-v`).textContent = (+el.value).toFixed(1); try { await LIVE.track.applyConstraints({advanced:[{[k]: +el.value}]}); } catch (e) { llog(`${k} change refused: ${e.name}`); } });
+    el.addEventListener('input', async () => {
+      $(`lpCam-${k}-v`).textContent = f(+el.value);
+      const adv = k === 'exposureTime' ? {exposureMode:'manual', exposureTime:+el.value} : {[k]: +el.value};
+      try { await LIVE.track.applyConstraints({advanced:[adv]}); } catch (e) { llog(`${k} change refused: ${e.name}`); }
+    });
   }
 }
 async function lockCamera(){
@@ -3093,7 +3177,7 @@ function liveReport(){
     `Sheet: ${W} × ${+D.toFixed(2)} ft · game ${game.name} · mode ${mode} · tracking ${LIVE.on ? LIVE.state : 'off'}`,
     `Source: ${LIVE.src || 'none'} · ${LIVE.label || ''} · ${st.width || '?'}×${st.height || '?'} at ${st.frameRate ? (+st.frameRate).toFixed(0) : '?'} fps requested settings · measured ${LIVE.camFps.toFixed(1)} fps`,
     `Camera controls: ${Object.keys(LIVE.caps || {}).join(', ') || 'none reported'} · ${LIVE.lockNote || 'not locked'}`,
-    `Processing: ${LIVE.pw}×${LIVE.ph} · ${LIVE.procMs.toFixed(1)} ms per frame · ball found in ${f.frames ? Math.round(f.hits/f.frames*100) : 0}% of ${f.frames} frames`,
+    `Processing: ${LIVE.pw}×${LIVE.ph} · ${LIVE.procMs.toFixed(1)} ms per frame · ball found in ${f.frames ? Math.round(f.hits/f.frames*100) : 0}% of ${f.frames} frames (${f.weak} by the loose match) · shots started ${f.moveStarts} while rolling, ${f.restStarts} at rest`,
     c ? `Calibration: ${c.n} of ${c.of} dots · fit ${c.fitAvg.toFixed(2)} in avg, ${c.fitMax.toFixed(2)} in worst · check ${c.checkAvg != null ? c.checkAvg.toFixed(2)+' in avg, '+c.checkMax.toFixed(2)+' in worst' : 'not run'} · ${new Date(c.at).toLocaleTimeString()} · camera→sheet ${c.Hcs.map(v=>+v.toPrecision(6)).join(', ')}` : 'Calibration: none',
     `Ball color: hue ${LIVE.color.h}° ±${LIVE.color.dh}° · sat ≥ ${LIVE.color.s} · bright ≥ ${LIVE.color.v} · ${LIVE.color.sampled ? 'sampled' : 'default'} · expected ball area at center ${LIVE.Hsc && LIVE.pw ? expectedArea(W/2, D/2).toFixed(1) : '?'} px`,
     `Last detection: ${b ? `${b.x.toFixed(2)}, ${b.y.toFixed(2)} ft, area ${b.area} px (expected ${b.exp.toFixed(1)})` : 'none'} · ${LIVE.det ? `${LIVE.det.count} matching px, ${LIVE.det.blobs.length} blobs${LIVE.det.note ? ', ' + LIVE.det.note : ''}` : ''}`,
@@ -3172,8 +3256,8 @@ function drawDebug(){
   const b = LIVE.det && LIVE.det.best, f = LIVE.stats, c = LIVE.cal;
   const lines = [
     `CAM ${LIVE.camFps.toFixed(1)} fps · ${LIVE.pw}×${LIVE.ph} · ${LIVE.procMs.toFixed(1)} ms`,
-    `STATE ${LIVE.on ? LIVE.state.toUpperCase() : 'PAUSED'} · ${mode.toUpperCase()} · found ${f.frames ? Math.round(f.hits/f.frames*100) : 0}%`,
-    b ? `BALL ${b.x.toFixed(2)}, ${b.y.toFixed(2)} ft · ${b.area} px (exp ${b.exp.toFixed(0)})` : `BALL none · ${LIVE.det ? LIVE.det.count : 0} px match${LIVE.det && LIVE.det.note ? ' · ' + LIVE.det.note : ''}`,
+    `STATE ${LIVE.on ? LIVE.state.toUpperCase() : 'PAUSED'} · ${mode.toUpperCase()} · found ${f.frames ? Math.round(f.hits/f.frames*100) : 0}% · starts ${f.moveStarts} rolling, ${f.restStarts} at rest`,
+    b ? `BALL ${b.x.toFixed(2)}, ${b.y.toFixed(2)} ft · ${b.area} px (exp ${b.exp.toFixed(0)})${LIVE.det.weak ? ' · loose match' : ''}` : `BALL none · ${LIVE.det ? LIVE.det.count : 0} px match${LIVE.det && LIVE.det.note ? ' · ' + LIVE.det.note : ''}`,
     c ? `CAL ${c.n} dots · check ${c.checkAvg != null ? c.checkAvg.toFixed(2) + ' in' : '—'} · DELAY ${Math.round(LIVE.latency*1000)} ms` : 'CAL none',
     ...LIVE.log.slice(-4).map(e => '› ' + e.msg)
   ];
@@ -3246,7 +3330,7 @@ function bindLivePanel(){
   $('lpDelay').addEventListener('click', measureDelay);
   $('lpSample').addEventListener('click', sampleBall);
   $('lpSweep').addEventListener('click', runSweep);
-  $('lpPlay').addEventListener('click', () => { if (LIVE.on){ stopLivePlay(); renderLiveStatus(); return; } if (startLivePlay()){ showLivePanel(false); LIVE.on = true; LIVE.state = mode === 'aim' ? 'ready' : 'collect'; } else lpNote('lpCalNote', LIVE.src ? 'Calibrate before tracking.' : 'Start the camera first.', 'bad'); renderLiveStatus(); });
+  $('lpPlay').addEventListener('click', () => { if (LIVE.on){ stopLivePlay(); renderLiveStatus(); return; } if (startLivePlay()) showLivePanel(false); else lpNote('lpCalNote', LIVE.src ? 'Calibrate before tracking.' : 'Start the camera first.', 'bad'); renderLiveStatus(); });
   $('lpClose').addEventListener('click', () => showLivePanel(false));
   $('lpDbg').addEventListener('change', () => { LIVE.dbg = $('lpDbg').checked; buildPixMap(); });
   $('lpMark').addEventListener('change', () => { LIVE.mark = $('lpMark').checked; });
